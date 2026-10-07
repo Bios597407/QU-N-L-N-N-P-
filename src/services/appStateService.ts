@@ -28,6 +28,17 @@ import {
 import { OFFICIAL_CONDUCT_CATALOG, ConductCatalogItem } from '../domain/incidents/conductCatalog';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export interface CurrentUser {
   id: string;
   name: string;
@@ -99,6 +110,11 @@ function buildOfficial10A16Students(): Student[] {
 class AppStateService {
   // Official Production Roster for 10A16
   public dataMode: 'official_10a16' = 'official_10a16';
+
+  // Supabase Live Sync State
+  public isSupabaseSyncing: boolean = false;
+  public lastSupabaseSyncTime: string | null = null;
+  public isRealtimeSubscribed: boolean = false;
 
   // Active toast notifications
   public toasts: ToastNotification[] = [];
@@ -539,7 +555,7 @@ class AppStateService {
 
   // --- Student Management (GVCN & Ban Cán sự có toàn quyền điều chỉnh) ---
   public addStudent(studentData: Omit<Student, 'id'>): { success: boolean; id: string } {
-    const id = `stu-${Date.now()}`;
+    const id = studentData.student_code ? `stu-10a16-${studentData.student_code.replace(/[^a-zA-Z0-9]/g, '')}` : `stu-${Date.now()}`;
     const newStudent: Student = {
       ...studentData,
       id,
@@ -556,6 +572,24 @@ class AppStateService {
     );
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('students').upsert({
+        id: newStudent.id,
+        student_code: newStudent.student_code,
+        full_name: newStudent.full_name,
+        first_name: newStudent.first_name,
+        last_name: newStudent.last_name,
+        class_id: 'class-10a16',
+        group_id: newStudent.group_id,
+        seat_number: newStudent.seat_number,
+        status: newStudent.status,
+        is_demo: false,
+      }).then(({ error }) => {
+        if (error) console.error('Supabase auto-add student error:', error);
+      });
+    }
+
     return { success: true, id };
   }
 
@@ -572,6 +606,19 @@ class AppStateService {
     );
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('students').update({
+        full_name: stu.full_name,
+        first_name: stu.first_name,
+        last_name: stu.last_name,
+        group_id: stu.group_id,
+        seat_number: stu.seat_number,
+        status: stu.status,
+      }).eq('id', studentId).then(({ error }) => {
+        if (error) console.error('Supabase auto-update student error:', error);
+      });
+    }
   }
 
   public deleteStudent(studentId: string) {
@@ -592,6 +639,12 @@ class AppStateService {
     );
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('students').delete().eq('id', studentId).then(({ error }) => {
+        if (error) console.error('Supabase auto-delete student error:', error);
+      });
+    }
   }
 
   // --- Group Management (Tổ học tập) ---
@@ -703,7 +756,7 @@ class AppStateService {
       (a) => a.student_id === record.student_id && a.date === record.date && a.session === record.session
     );
 
-    const id = existingIndex >= 0 ? this.attendance[existingIndex].id : `att-${Date.now()}`;
+    const id = existingIndex >= 0 ? this.attendance[existingIndex].id : generateUUID();
     const newRec: AttendanceRecord = { ...record, id };
 
     if (existingIndex >= 0) {
@@ -714,6 +767,22 @@ class AppStateService {
 
     this.addAuditLog(this.currentUser.name, 'Ghi nhận điểm danh', 'attendance', id, `Trạng thái: ${record.status}`);
     this.notify();
+
+    if (supabase) {
+      supabase.from('attendance_records').upsert({
+        student_id: record.student_id,
+        class_id: 'class-10a16',
+        date: record.date,
+        session_id: record.session,
+        status: record.status,
+        arrival_time: record.arrival_time || null,
+        reason: record.reason || null,
+        is_legitimate_exception: Boolean(record.is_legitimate_exception),
+      }, { onConflict: 'student_id,date,session_id' }).then(({ error }) => {
+        if (error) console.error('Supabase auto-save attendance error:', error);
+      });
+    }
+
     return { success: true, id };
   }
 
@@ -738,7 +807,7 @@ class AppStateService {
       baseDeduction = catalogItem ? catalogItem.defaultPoints : 0;
     }
 
-    const id = `inc-${Date.now()}`;
+    const id = generateUUID();
     const newIncident: Incident = {
       ...incidentData,
       id,
@@ -759,6 +828,29 @@ class AppStateService {
 
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('incidents').insert({
+        id: newIncident.id,
+        student_id: newIncident.student_id,
+        class_id: 'class-10a16',
+        conduct_code: newIncident.conduct_code,
+        is_other_category: Boolean(newIncident.is_other_category),
+        other_category_description: newIncident.other_category_description || null,
+        date: newIncident.date,
+        session_id: newIncident.session,
+        period_number: newIncident.period || null,
+        incident_status: newIncident.incident_status,
+        score_effect_status: newIncident.score_effect_status,
+        base_deduction: newIncident.base_deduction,
+        effective_deduction: newIncident.effective_deduction,
+        reporter_name: newIncident.reported_by || this.currentUser.name,
+        reporter_role: newIncident.reporter_role || this.currentUser.role,
+        notes: newIncident.notes || null,
+      }).then(({ error }) => {
+        if (error) console.error('Supabase auto-save incident error:', error);
+      });
+    }
 
     return {
       success: true,
@@ -796,6 +888,17 @@ class AppStateService {
 
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('incidents').update({
+        incident_status: action,
+        score_effect_status: scoreEffectStatus,
+        effective_deduction: inc.effective_deduction,
+        gvcn_comment: comment || null,
+      }).eq('id', incidentId).then(({ error }) => {
+        if (error) console.error('Supabase auto-review incident error:', error);
+      });
+    }
   }
 
   public updateIncident(incidentId: string, updates: Partial<Incident>) {
@@ -821,6 +924,22 @@ class AppStateService {
 
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('incidents').update({
+        conduct_code: inc.conduct_code,
+        date: inc.date,
+        session_id: inc.session,
+        notes: inc.notes,
+        incident_status: inc.incident_status,
+        score_effect_status: inc.score_effect_status,
+        base_deduction: inc.base_deduction,
+        effective_deduction: inc.effective_deduction,
+        reporter_name: inc.reported_by,
+      }).eq('id', incidentId).then(({ error }) => {
+        if (error) console.error('Supabase auto-update incident error:', error);
+      });
+    }
   }
 
   public deleteIncident(incidentId: string) {
@@ -840,6 +959,12 @@ class AppStateService {
 
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('incidents').delete().eq('id', incidentId).then(({ error }) => {
+        if (error) console.error('Supabase auto-delete incident error:', error);
+      });
+    }
   }
 
   // --- Rewards ---
@@ -848,7 +973,7 @@ class AppStateService {
       (r) => r.student_id === reward.student_id && r.reward_code === reward.reward_code && r.date === reward.date
     );
 
-    const id = `rew-${Date.now()}`;
+    const id = generateUUID();
     const newRew: RewardRecord = {
       ...reward,
       id,
@@ -860,6 +985,22 @@ class AppStateService {
     this.addAuditLog(this.currentUser.name, 'Đề xuất khen thưởng nề nếp', 'reward', id, `Mã: ${reward.reward_code} (+${reward.points}đ)`);
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('reward_records').insert({
+        id: newRew.id,
+        student_id: newRew.student_id,
+        class_id: 'class-10a16',
+        reward_code: newRew.reward_code,
+        title: newRew.title,
+        points: newRew.points,
+        status: newRew.status,
+        proposer: newRew.proposer,
+        date: newRew.date,
+      }).then(({ error }) => {
+        if (error) console.error('Supabase auto-save reward error:', error);
+      });
+    }
 
     return {
       success: true,
@@ -878,6 +1019,14 @@ class AppStateService {
     this.addAuditLog(this.currentUser.name, approved ? 'Phê duyệt khen thưởng' : 'Từ chối khen thưởng', 'reward', rewardId);
     this.calculateAllWeeklyScores(1);
     this.notify();
+
+    if (supabase) {
+      supabase.from('reward_records').update({
+        status: rew.status,
+      }).eq('id', rewardId).then(({ error }) => {
+        if (error) console.error('Supabase auto-review reward error:', error);
+      });
+    }
   }
 
   // --- Positive Notes ---
@@ -1148,6 +1297,37 @@ class AppStateService {
   }
 
   // --- Supabase Cloud Sync Methods ---
+  public async initSupabaseData() {
+    if (!supabase) return;
+
+    try {
+      // 1. Tự động nạp dữ liệu mới nhất từ Supabase ngay khi mở web
+      await this.fetchFromSupabase(true);
+
+      // 2. Kích hoạt kết nối thời gian thực Supabase Realtime Channel
+      if (!this.isRealtimeSubscribed) {
+        this.isRealtimeSubscribed = true;
+        supabase
+          .channel('vtt_realtime_sync')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => {
+            this.fetchFromSupabase(true);
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
+            this.fetchFromSupabase(true);
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'reward_records' }, () => {
+            this.fetchFromSupabase(true);
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records' }, () => {
+            this.fetchFromSupabase(true);
+          })
+          .subscribe();
+      }
+    } catch (e) {
+      console.warn('Lỗi khởi tạo Supabase Sync:', e);
+    }
+  }
+
   public async syncAllToSupabase(): Promise<{ success: boolean; message: string }> {
     if (!supabase) {
       return {
@@ -1157,6 +1337,9 @@ class AppStateService {
     }
 
     try {
+      this.isSupabaseSyncing = true;
+      this.notify();
+
       // 1. Classes
       await supabase.from('classes').upsert({
         id: 'class-10a16',
@@ -1165,7 +1348,19 @@ class AppStateService {
         gvcn_name: this.classInfo.gvcn_name,
       });
 
-      // 2. Students (43 official students)
+      // 2. Groups
+      if (this.groups.length > 0) {
+        const groupsPayload = this.groups.map((g) => ({
+          id: g.id,
+          class_id: 'class-10a16',
+          group_number: g.group_number,
+          group_name: g.group_name,
+          leader_student_id: g.leader_student_id || null,
+        }));
+        await supabase.from('groups').upsert(groupsPayload, { onConflict: 'id' });
+      }
+
+      // 3. Students (43 official students)
       const studentsPayload = this.students.map((s) => ({
         id: s.id,
         student_code: s.student_code,
@@ -1178,35 +1373,37 @@ class AppStateService {
         status: s.status,
         is_demo: false,
       }));
-      const { error: stuErr } = await supabase.from('students').upsert(studentsPayload, { onConflict: 'student_code' });
+      const { error: stuErr } = await supabase.from('students').upsert(studentsPayload, { onConflict: 'id' });
       if (stuErr) throw stuErr;
 
-      // 3. Incidents
+      // 4. Incidents
       if (this.incidents.length > 0) {
         const incidentsPayload = this.incidents.map((i) => ({
-          id: i.id,
+          id: i.id && i.id.length === 36 ? i.id : undefined,
           student_id: i.student_id,
           class_id: 'class-10a16',
           conduct_code: i.conduct_code,
-          is_other_category: i.is_other_category,
-          other_category_description: i.other_category_description,
+          is_other_category: Boolean(i.is_other_category),
+          other_category_description: i.other_category_description || null,
           date: i.date,
-          session: i.session,
+          session_id: i.session || 'morning',
+          period_number: i.period || null,
           incident_status: i.incident_status,
           score_effect_status: i.score_effect_status,
           base_deduction: i.base_deduction,
           effective_deduction: i.effective_deduction,
-          reported_by: i.reported_by,
-          reporter_role: i.reporter_role,
-          notes: i.notes,
+          reporter_name: i.reported_by || this.currentUser.name,
+          reporter_role: i.reporter_role || this.currentUser.role,
+          notes: i.notes || null,
+          gvcn_comment: i.gvcn_comment || null,
         }));
         await supabase.from('incidents').upsert(incidentsPayload);
       }
 
-      // 4. Rewards
+      // 5. Rewards
       if (this.rewards.length > 0) {
         const rewardsPayload = this.rewards.map((r) => ({
-          id: r.id,
+          id: r.id && r.id.length === 36 ? r.id : undefined,
           student_id: r.student_id,
           class_id: 'class-10a16',
           reward_code: r.reward_code,
@@ -1216,35 +1413,60 @@ class AppStateService {
           proposer: r.proposer,
           date: r.date,
         }));
-        await supabase.from('rewards').upsert(rewardsPayload);
+        await supabase.from('reward_records').upsert(rewardsPayload);
       }
 
+      // 6. Attendance
+      if (this.attendance.length > 0) {
+        const attendancePayload = this.attendance.map((a) => ({
+          student_id: a.student_id,
+          class_id: 'class-10a16',
+          date: a.date,
+          session_id: a.session || 'morning',
+          status: a.status,
+          arrival_time: a.arrival_time || null,
+          reason: a.reason || null,
+          is_legitimate_exception: Boolean(a.is_legitimate_exception),
+        }));
+        await supabase.from('attendance_records').upsert(attendancePayload, { onConflict: 'student_id,date,session_id' });
+      }
+
+      this.lastSupabaseSyncTime = new Date().toLocaleTimeString('vi-VN');
+      this.isSupabaseSyncing = false;
       this.addAuditLog(this.currentUser.name, 'Đồng bộ toàn bộ dữ liệu lên Supabase Cloud', 'cloud_sync', 'class-10a16');
       this.showToast('Đã đồng bộ thành công toàn bộ dữ liệu lên Supabase Cloud!', 'success');
+      this.notify();
 
       return {
         success: true,
         message: `Đồng bộ thành công ${this.students.length} học sinh và dữ liệu nề nếp lên Supabase Cloud!`,
       };
     } catch (err: any) {
+      this.isSupabaseSyncing = false;
+      this.notify();
       console.error('Lỗi sync Supabase:', err);
       return {
         success: false,
-        message: `Không thể đồng bộ: ${err.message || 'Vui lòng kiểm tra quyền truy cập RLS trên bảng Supabase.'}`,
+        message: `Không thể đồng bộ: ${err.message || 'Vui lòng kiểm tra quyền truy cập trên bảng Supabase.'}`,
       };
     }
   }
 
-  public async fetchFromSupabase(): Promise<{ success: boolean; message: string }> {
+  public async fetchFromSupabase(silent: boolean = false): Promise<{ success: boolean; message: string }> {
     if (!supabase) {
       return { success: false, message: 'Chưa cấu hình Supabase Cloud.' };
     }
 
     try {
+      this.isSupabaseSyncing = true;
+      this.notify();
+
+      // 1. Fetch Students
       const { data: studentsData, error: stuErr } = await supabase
         .from('students')
         .select('*')
-        .eq('class_id', 'class-10a16');
+        .eq('class_id', 'class-10a16')
+        .order('student_code', { ascending: true });
 
       if (stuErr) throw stuErr;
 
@@ -1256,32 +1478,106 @@ class AppStateService {
           first_name: s.first_name || '',
           last_name: s.last_name || '',
           class_id: s.class_id,
-          group_id: s.group_id,
-          seat_number: s.seat_number,
+          group_id: s.group_id || 'group-01',
+          seat_number: s.seat_number || '',
           status: s.status || 'active',
           is_demo: false,
         }));
       }
 
-      const { data: incData } = await supabase
+      // 2. Fetch Incidents
+      const { data: incData, error: incErr } = await supabase
         .from('incidents')
         .select('*')
-        .eq('class_id', 'class-10a16');
+        .eq('class_id', 'class-10a16')
+        .order('created_at', { ascending: false });
 
-      if (incData) {
-        this.incidents = incData;
+      if (!incErr && incData) {
+        this.incidents = incData.map((i: any) => ({
+          id: i.id,
+          canonical_id: i.canonical_id || undefined,
+          student_id: i.student_id,
+          class_id: i.class_id,
+          conduct_code: i.conduct_code,
+          is_other_category: Boolean(i.is_other_category),
+          other_category_description: i.other_category_description || undefined,
+          date: i.date,
+          session: (i.session_id === 'afternoon' ? 'afternoon' : 'morning') as 'morning' | 'afternoon',
+          period: i.period_number || undefined,
+          time: i.time || undefined,
+          teacher_permission: i.teacher_permission || undefined,
+          incident_status: i.incident_status,
+          score_effect_status: i.score_effect_status,
+          base_deduction: Number(i.base_deduction) || 0,
+          effective_deduction: Number(i.effective_deduction) || 0,
+          reported_by: i.reporter_name || 'Ban Cán sự',
+          reporter_role: i.reporter_role || 'lop_truong',
+          notes: i.notes || undefined,
+          gvcn_comment: i.gvcn_comment || undefined,
+          created_at: i.created_at || new Date().toISOString(),
+        }));
+      }
+
+      // 3. Fetch Rewards
+      const { data: rwData, error: rwErr } = await supabase
+        .from('reward_records')
+        .select('*')
+        .eq('class_id', 'class-10a16')
+        .order('created_at', { ascending: false });
+
+      if (!rwErr && rwData) {
+        this.rewards = rwData.map((r: any) => ({
+          id: r.id,
+          student_id: r.student_id,
+          class_id: r.class_id,
+          reward_code: r.reward_code,
+          title: r.title,
+          points: Number(r.points) || 1,
+          status: r.status,
+          proposer: r.proposer,
+          date: r.date,
+          created_at: r.created_at || new Date().toISOString(),
+        }));
+      }
+
+      // 4. Fetch Attendance
+      const { data: attData, error: attErr } = await supabase
+        .from('attendance_records')
+        .select('*')
+        .eq('class_id', 'class-10a16')
+        .order('date', { ascending: false });
+
+      if (!attErr && attData) {
+        this.attendance = attData.map((a: any) => ({
+          id: a.id,
+          student_id: a.student_id,
+          class_id: a.class_id,
+          date: a.date,
+          session: (a.session_id === 'afternoon' ? 'afternoon' : 'morning') as 'morning' | 'afternoon',
+          status: a.status,
+          arrival_time: a.arrival_time || undefined,
+          reason: a.reason || undefined,
+          is_legitimate_exception: Boolean(a.is_legitimate_exception),
+        }));
       }
 
       this.calculateAllWeeklyScores(1);
-      this.addAuditLog(this.currentUser.name, 'Tải dữ liệu mới nhất từ Supabase Cloud', 'cloud_fetch', 'class-10a16');
+      this.lastSupabaseSyncTime = new Date().toLocaleTimeString('vi-VN');
+      this.isSupabaseSyncing = false;
       this.notify();
-      this.showToast('Đã tải và cập nhật dữ liệu từ Supabase Cloud!', 'success');
+
+      if (!silent) {
+        this.addAuditLog(this.currentUser.name, 'Tải dữ liệu mới nhất từ Supabase Cloud', 'cloud_fetch', 'class-10a16');
+        this.showToast(`Đã đồng bộ từ Supabase: ${this.students.length} học sinh, ${this.incidents.length} vi phạm, ${this.rewards.length} khen thưởng!`, 'success');
+      }
 
       return {
         success: true,
-        message: `Tải thành công ${studentsData?.length || 0} học sinh và ${incData?.length || 0} sự việc từ Supabase!`,
+        message: `Tải thành công ${this.students.length} học sinh và ${this.incidents.length} sự việc từ Supabase!`,
       };
     } catch (err: any) {
+      this.isSupabaseSyncing = false;
+      this.notify();
       return {
         success: false,
         message: `Không thể tải dữ liệu: ${err.message}`,

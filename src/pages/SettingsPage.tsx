@@ -268,11 +268,21 @@ export const SettingsPage: React.FC = () => {
             )}
 
             {/* Cloud Sync Actions */}
-            <div className="pt-3 border-t border-slate-100 space-y-2">
+            <div className="pt-3 border-t border-slate-100 space-y-2.5">
               <div className="font-bold text-slate-800 text-[11px] flex items-center justify-between">
-                <span>Đồng bộ 2 chiều với Supabase:</span>
-                <span className="text-[10px] text-blue-600 font-normal">Dự án: ziizirpucnapapgbfskw</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Đồng bộ 2 chiều Supabase Production (Realtime):
+                </span>
+                <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold border border-emerald-200">
+                  {appState.lastSupabaseSyncTime ? `Đã đồng bộ lúc: ${appState.lastSupabaseSyncTime}` : 'Đang kết nối'}
+                </span>
               </div>
+
+              <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 leading-relaxed">
+                ⚡ <strong>Cơ chế tự động:</strong> Khi bạn thay đổi nội dung trực tiếp trên <a href="https://supabase.com/dashboard/project/ziizirpucnapapgbfskw/editor" target="_blank" rel="noreferrer" className="underline font-bold text-blue-600">Supabase Table Editor</a> (thêm/sửa học sinh, vi phạm, điểm danh), ứng dụng sẽ tự động cập nhật ngay lập tức qua kết nối thời gian thực (Realtime). Mọi thao tác trên web cũng được lưu trực tiếp vào cơ sở dữ liệu Supabase.
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -283,7 +293,7 @@ export const SettingsPage: React.FC = () => {
                   className="py-2 px-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  <span>Đẩy lên Supabase (Sync)</span>
+                  <span>Đẩy toàn bộ lên Supabase</span>
                 </button>
 
                 <button
@@ -295,12 +305,9 @@ export const SettingsPage: React.FC = () => {
                   className="py-2 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Tải từ Supabase (Pull)</span>
+                  <span>Tải lại từ Supabase ngay</span>
                 </button>
               </div>
-              <p className="text-[10px] text-slate-500 leading-normal">
-                * Nhấn <strong>&ldquo;Đẩy lên Supabase&rdquo;</strong> để cập nhật danh sách 43 học sinh, vi phạm nề nếp và ban cán sự lên bảng dữ liệu tại <a href="https://supabase.com/dashboard/project/ziizirpucnapapgbfskw/editor" target="_blank" rel="noreferrer" className="underline font-bold text-blue-600">supabase.com</a>.
-              </p>
             </div>
           </form>
         </div>

@@ -48,9 +48,10 @@ export function App() {
   const [pendingTabAfterAuth, setPendingTabAfterAuth] = useState<NavTab | null>(null);
   const [authPromptMessage, setAuthPromptMessage] = useState<string | null>(null);
 
-  // Subscribe to appState updates for reactivity
+  // Subscribe to appState updates for reactivity & Auto-fetch Supabase Cloud data
   const [, setTick] = useState(0);
   useEffect(() => {
+    appState.initSupabaseData();
     return appState.subscribe(() => setTick((t) => t + 1));
   }, []);
 
