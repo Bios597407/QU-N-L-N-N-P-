@@ -1,0 +1,52 @@
+// Private Roster Artifact for Class 10A16 - THPT Võ Trường Toản
+// Academic Year 2026-2027 | GVCN: Trần Duy Tân
+// Kept separate from public demo fixtures. is_demo = false.
+// No invented DOB, phone, address, gender, or parent names.
+
+import { Student } from '../types';
+
+export const PRIVATE_ROSTER_10A16: Student[] = [
+  { id: '10A16-01', student_code: '10A16.01', last_name: 'Trần Đức', first_name: 'Anh', full_name: 'Trần Đức Anh', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-02', student_code: '10A16.02', last_name: 'Lê Thiên', first_name: 'Bảo', full_name: 'Lê Thiên Bảo', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-03', student_code: '10A16.03', last_name: 'Nguyễn Gia', first_name: 'Bảo', full_name: 'Nguyễn Gia Bảo', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-04', student_code: '10A16.04', last_name: 'Bùi Trịnh Hoàng', first_name: 'Các', full_name: 'Bùi Trịnh Hoàng Các', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-05', student_code: '10A16.05', last_name: 'Đinh Thanh Bảo', first_name: 'Châu', full_name: 'Đinh Thanh Bảo Châu', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-06', student_code: '10A16.06', last_name: 'Nguyễn Lê Minh', first_name: 'Châu', full_name: 'Nguyễn Lê Minh Châu', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-07', student_code: '10A16.07', last_name: 'Nguyễn Hữu', first_name: 'Công', full_name: 'Nguyễn Hữu Công', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-08', student_code: '10A16.08', last_name: 'Thái Trần Thanh', first_name: 'Danh', full_name: 'Thái Trần Thanh Danh', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-09', student_code: '10A16.09', last_name: 'Nguyễn Thùy', first_name: 'Dung', full_name: 'Nguyễn Thùy Dung', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-10', student_code: '10A16.10', last_name: 'Hoàng Mạnh', first_name: 'Dũng', full_name: 'Hoàng Mạnh Dũng', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-11', student_code: '10A16.11', last_name: 'Văn Tấn', first_name: 'Duy', full_name: 'Văn Tấn Duy', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-12', student_code: '10A16.12', last_name: 'Nguyễn Ngọc Gia', first_name: 'Hân', full_name: 'Nguyễn Ngọc Gia Hân', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-13', student_code: '10A16.13', last_name: 'Nguyễn Ngọc Diệu', first_name: 'Hiền', full_name: 'Nguyễn Ngọc Diệu Hiền', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-14', student_code: '10A16.14', last_name: 'Bùi Trung', first_name: 'Hiếu', full_name: 'Bùi Trung Hiếu', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-15', student_code: '10A16.15', last_name: 'Ngô Khải', first_name: 'Hoàn', full_name: 'Ngô Khải Hoàn', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-16', student_code: '10A16.16', last_name: 'Nguyễn Minh', first_name: 'Kha', full_name: 'Nguyễn Minh Kha', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-17', student_code: '10A16.17', last_name: 'Phạm Huỳnh Quang', first_name: 'Khải', full_name: 'Phạm Huỳnh Quang Khải', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-18', student_code: '10A16.18', last_name: 'Thân Gia', first_name: 'Kiệt', full_name: 'Thân Gia Kiệt', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-19', student_code: '10A16.19', last_name: 'Hồ Tường', first_name: 'Lân', full_name: 'Hồ Tường Lân', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-20', student_code: '10A16.20', last_name: 'Lưu Ngọc', first_name: 'Linh', full_name: 'Lưu Ngọc Linh', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-21', student_code: '10A16.21', last_name: 'Phạm Trần Gia', first_name: 'Lộc', full_name: 'Phạm Trần Gia Lộc', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-22', student_code: '10A16.22', last_name: 'Nguyễn Hoàng Bảo', first_name: 'Long', full_name: 'Nguyễn Hoàng Bảo Long', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-23', student_code: '10A16.23', last_name: 'Hoàng Trọng', first_name: 'Minh', full_name: 'Hoàng Trọng Minh', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-24', student_code: '10A16.24', last_name: 'Ngô Hùng', first_name: 'Minh', full_name: 'Ngô Hùng Minh', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-25', student_code: '10A16.25', last_name: 'Vũ Hoàng Nhật', first_name: 'Minh', full_name: 'Vũ Hoàng Nhật Minh', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-26', student_code: '10A16.26', last_name: 'Khưu Hoàng', first_name: 'Nam', full_name: 'Khưu Hoàng Nam', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-27', student_code: '10A16.27', last_name: 'Nguyễn Thanh Kỳ', first_name: 'Nam', full_name: 'Nguyễn Thanh Kỳ Nam', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-28', student_code: '10A16.28', last_name: 'Nguyễn Huỳnh', first_name: 'Nguyên', full_name: 'Nguyễn Huỳnh Nguyên', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-29', student_code: '10A16.29', last_name: 'Trần Minh', first_name: 'Nhật', full_name: 'Trần Minh Nhật', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-30', student_code: '10A16.30', last_name: 'Nguyễn Hòa', first_name: 'Phát', full_name: 'Nguyễn Hòa Phát', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-31', student_code: '10A16.31', last_name: 'Phạm Thành', first_name: 'Phát', full_name: 'Phạm Thành Phát', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-32', student_code: '10A16.32', last_name: 'Kim Trần Hoàng', first_name: 'Phúc', full_name: 'Kim Trần Hoàng Phúc', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-33', student_code: '10A16.33', last_name: 'Nguyễn Gia', first_name: 'Phúc', full_name: 'Nguyễn Gia Phúc', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-34', student_code: '10A16.34', last_name: 'Nguyễn Hoàng', first_name: 'Phúc', full_name: 'Nguyễn Hoàng Phúc', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-35', student_code: '10A16.35', last_name: 'Nguyễn Thái', first_name: 'Sơn', full_name: 'Nguyễn Thái Sơn', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-36', student_code: '10A16.36', last_name: 'Bùi Lê Minh', first_name: 'Tâm', full_name: 'Bùi Lê Minh Tâm', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-37', student_code: '10A16.37', last_name: 'Lê Minh', first_name: 'Tâm', full_name: 'Lê Minh Tâm', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-38', student_code: '10A16.38', last_name: 'Vũ Viết', first_name: 'Thành', full_name: 'Vũ Viết Thành', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-39', student_code: '10A16.39', last_name: 'Trần Thái', first_name: 'Thịnh', full_name: 'Trần Thái Thịnh', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-40', student_code: '10A16.40', last_name: 'Nguyễn Anh', first_name: 'Thư', full_name: 'Nguyễn Anh Thư', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-41', student_code: '10A16.41', last_name: 'Nguyễn Trọng', first_name: 'Tín', full_name: 'Nguyễn Trọng Tín', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-42', student_code: '10A16.42', last_name: 'Nguyễn Trọng', first_name: 'Tùng', full_name: 'Nguyễn Trọng Tùng', class_id: 'class-10a16', is_demo: false, status: 'active' },
+  { id: '10A16-43', student_code: '10A16.43', last_name: 'Lý Tú', first_name: 'Uyên', full_name: 'Lý Tú Uyên', class_id: 'class-10a16', is_demo: false, status: 'active' },
+];

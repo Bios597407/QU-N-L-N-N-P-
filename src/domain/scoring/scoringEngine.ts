@@ -1,0 +1,276 @@
+// Core Pure Scoring Engine
+// School: THPT Võ Trường Toản - QĐ 525/QĐ-THPT.VTT & Thông tư 22/2021/TT-BGDĐT
+// Class: 10A16 (2026-2027)
+
+import { ConductLevel, Incident, RewardRecord } from '../../types';
+
+export interface WeeklyScoreInput {
+  baseScore?: number; // default 8
+  isCalculated: boolean;
+  isFutureWeek?: boolean;
+  incidents: Incident[];
+  rewards: RewardRecord[];
+}
+
+export interface WeeklyScoreResult {
+  raw_week_score: number | null;
+  official_week_score: number | null;
+  total_deductions: number;
+  total_rewards: number;
+  eligible_incidents_count: number;
+  eligible_rewards_count: number;
+  explanation: string;
+}
+
+/**
+ * Calculate weekly conduct score.
+ * Base score = 8 points.
+ * official_week_score = min(10, max(0, raw_week_score)).
+ * Clamp happens exactly ONCE at the end.
+ * Pending incidents, rejected incidents, or incidents with score_effect_status = 'pending_rule' contribute 0.
+ * Pending rewards contribute 0.
+ * Future or uncomputed week returns null.
+ */
+export function calculateWeeklyScore(input: WeeklyScoreInput): WeeklyScoreResult {
+  if (input.isFutureWeek || !input.isCalculated) {
+    return {
+      raw_week_score: null,
+      official_week_score: null,
+      total_deductions: 0,
+      total_rewards: 0,
+      eligible_incidents_count: 0,
+      eligible_rewards_count: 0,
+      explanation: 'Tuần tương lai hoặc chưa đến kỳ tính điểm',
+    };
+  }
+
+  const baseScore = input.baseScore ?? 8;
+
+  // Track canonical incidents to prevent duplicate counting
+  const processedCanonicalIds = new Set<string>();
+  let totalDeductions = 0;
+  let eligibleIncidentsCount = 0;
+
+  for (const inc of input.incidents) {
+    // Only approved factual incidents can have score effect
+    if (inc.incident_status !== 'approved') continue;
+    // If score effect status is pending_rule, none, or waived: contributes 0
+    if (inc.score_effect_status !== 'confirmed_effect') continue;
+
+    // Check canonical deduplication
+    const dedupeKey = inc.canonical_id || inc.id;
+    if (processedCanonicalIds.has(dedupeKey)) {
+      continue; // raw duplicate report already covered by canonical
+    }
+    processedCanonicalIds.add(dedupeKey);
+
+    totalDeductions += inc.effective_deduction; // e.g. -2, -4, -6
+    eligibleIncidentsCount++;
+  }
+
+  // Rewards: only approved rewards affect score
+  let totalRewards = 0;
+  let eligibleRewardsCount = 0;
+  for (const rew of input.rewards) {
+    if (rew.status === 'approved') {
+      totalRewards += rew.points;
+      eligibleRewardsCount++;
+    }
+  }
+
+  // Calculate raw score without intermediate clamping
+  const raw_week_score = baseScore + totalDeductions + totalRewards;
+
+  // Clamp ONCE at the very end to range [0, 10]
+  const official_week_score = Math.min(10, Math.max(0, raw_week_score));
+
+  return {
+    raw_week_score: Number(raw_week_score.toFixed(4)),
+    official_week_score: Number(official_week_score.toFixed(4)),
+    total_deductions: totalDeductions,
+    total_rewards: totalRewards,
+    eligible_incidents_count: eligibleIncidentsCount,
+    eligible_rewards_count: eligibleRewardsCount,
+    explanation: `Điểm cơ bản (${baseScore}) + Điểm trừ (${totalDeductions}) + Khen thưởng (+${totalRewards}) = ${raw_week_score} -> Điểm chính thức: ${official_week_score}`,
+  };
+}
+
+/**
+ * Monthly score: average of the weekly scores assigned to that month.
+ * Does NOT fill missing data with 0 or 8.
+ * Returns null if no valid week data exists.
+ */
+export function calculateMonthlyScore(weeklyScores: (number | null)[]): number | null {
+  const validScores = weeklyScores.filter((s): s is number => s !== null && !isNaN(s));
+  if (validScores.length === 0) return null;
+  const sum = validScores.reduce((acc, score) => acc + score, 0);
+  return Number((sum / validScores.length).toFixed(4));
+}
+
+/**
+ * Semester numeric score: average of the MONTH scores.
+ * Do NOT calculate semester by directly averaging every week.
+ * Do NOT fill missing data with 0 or 8.
+ */
+export function calculateSemesterNumericScore(monthScores: (number | null)[]): number | null {
+  const validMonths = monthScores.filter((s): s is number => s !== null && !isNaN(s));
+  if (validMonths.length === 0) return null;
+  const sum = validMonths.reduce((acc, score) => acc + score, 0);
+  return Number((sum / validMonths.length).toFixed(4));
+}
+
+/**
+ * Determine conduct level based on numeric score.
+ * Official thresholds:
+ * >= 7.0: Tốt
+ * 5.5 - 6.9: Khá
+ * 4.0 - 5.4: Đạt
+ * < 4.0: Chưa đạt
+ *
+ * CRITICAL RULE:
+ * Do NOT invent rounding. 6.95 must NOT automatically become 7.0 or Tốt.
+ * If decimal falls between 6.9 and 7.0, 5.4 and 5.5, or 3.9 and 4.0:
+ * returns 'Chờ xác nhận quy tắc làm tròn/ngưỡng'
+ */
+export function determineBaseConductLevel(numericScore: number | null): ConductLevel | 'Chưa đủ dữ liệu' {
+  if (numericScore === null) return 'Chưa đủ dữ liệu';
+
+  // Check unresolved decimal gap (e.g. 6.9 < score < 7.0)
+  if (numericScore > 6.9 && numericScore < 7.0) {
+    return 'Chờ xác nhận quy tắc làm tròn/ngưỡng';
+  }
+  if (numericScore > 5.4 && numericScore < 5.5) {
+    return 'Chờ xác nhận quy tắc làm tròn/ngưỡng';
+  }
+  if (numericScore > 3.9 && numericScore < 4.0) {
+    return 'Chờ xác nhận quy tắc làm tròn/ngưỡng';
+  }
+
+  if (numericScore >= 7.0) return 'Tốt';
+  if (numericScore >= 5.5) return 'Khá';
+  if (numericScore >= 4.0) return 'Đạt';
+  return 'Chưa đạt';
+}
+
+export interface SemesterEvaluationRestrictions {
+  permittedAbsenceCount: number; // excluding confirmed legitimate exceptions
+  unpermittedAbsenceCount: number;
+  phoneViolationsCount: number; // V24 count
+}
+
+/**
+ * Apply semester conduct restrictions:
+ * - Permitted absence count >= 10: cannot receive Tốt (cap at Khá).
+ * - Unpermitted absence count >= 2: cannot receive Tốt (cap at Khá).
+ * - Phone violation 2nd occurrence: maximum conduct level is Đạt.
+ * - Phone violation 3rd occurrence: conduct level is Chưa đạt.
+ */
+export function applySemesterRestrictions(
+  baseLevel: ConductLevel | 'Chưa đủ dữ liệu',
+  restrictions: SemesterEvaluationRestrictions
+): {
+  finalSuggestedLevel: ConductLevel | 'Chưa đủ dữ liệu';
+  attendanceCapApplied: boolean;
+  phoneCapApplied: boolean;
+  restrictionReasons: string[];
+} {
+  if (baseLevel === 'Chưa đủ dữ liệu' || baseLevel === 'Chờ xác nhận quy tắc làm tròn/ngưỡng') {
+    return {
+      finalSuggestedLevel: baseLevel,
+      attendanceCapApplied: false,
+      phoneCapApplied: false,
+      restrictionReasons: [],
+    };
+  }
+
+  let level: ConductLevel = baseLevel;
+  let attendanceCapApplied = false;
+  let phoneCapApplied = false;
+  const restrictionReasons: string[] = [];
+
+  // Attendance restrictions against 'Tốt'
+  if (level === 'Tốt') {
+    if (restrictions.permittedAbsenceCount >= 10) {
+      level = 'Khá';
+      attendanceCapApplied = true;
+      restrictionReasons.push(`Nghỉ học có phép >= 10 buổi (${restrictions.permittedAbsenceCount} buổi): không xếp mức Tốt.`);
+    }
+    if (restrictions.unpermittedAbsenceCount >= 2) {
+      level = 'Khá';
+      attendanceCapApplied = true;
+      restrictionReasons.push(`Nghỉ học không phép >= 2 buổi (${restrictions.unpermittedAbsenceCount} buổi): không xếp mức Tốt.`);
+    }
+  }
+
+  // Phone violation restrictions
+  if (restrictions.phoneViolationsCount === 2) {
+    if (level === 'Tốt' || level === 'Khá') {
+      level = 'Đạt';
+      phoneCapApplied = true;
+      restrictionReasons.push('Vi phạm sử dụng điện thoại lần 2: xếp loại học kỳ tối đa ở mức Đạt.');
+    }
+  } else if (restrictions.phoneViolationsCount >= 3) {
+    level = 'Chưa đạt';
+    phoneCapApplied = true;
+    restrictionReasons.push(`Vi phạm sử dụng điện thoại ${restrictions.phoneViolationsCount} lần: xếp loại học kỳ mức Chưa đạt.`);
+  }
+
+  return {
+    finalSuggestedLevel: level,
+    attendanceCapApplied,
+    phoneCapApplied,
+    restrictionReasons,
+  };
+}
+
+/**
+ * Official Annual Conduct Matrix (16 combinations)
+ * Input: Finalized HKI level and HKII level.
+ * Rule from QĐ 525 & Điều 8 Thông tư 22/2021/TT-BGDĐT:
+ *
+ * TỐT:
+ *   HKII = Tốt AND HKI >= Khá (HKI in [Tốt, Khá])
+ *
+ * KHÁ:
+ *   (HKII = Khá AND HKI >= Đạt [Tốt, Khá, Đạt])
+ *   OR (HKII = Đạt AND HKI = Tốt)
+ *   OR (HKII = Tốt AND HKI in [Đạt, Chưa đạt])
+ *
+ * ĐẠT:
+ *   (HKII = Đạt AND HKI in [Khá, Đạt, Chưa đạt])
+ *   OR (HKII = Khá AND HKI = Chưa đạt)
+ *
+ * CHƯA ĐẠT:
+ *   Tất cả trường hợp còn lại (bao gồm HKII = Chưa đạt).
+ */
+export function calculateAnnualConduct(hk1: ConductLevel, hk2: ConductLevel): ConductLevel {
+  // Check unresolved rounding input
+  if (hk1 === 'Chờ xác nhận quy tắc làm tròn/ngưỡng' || hk2 === 'Chờ xác nhận quy tắc làm tròn/ngưỡng') {
+    return 'Chờ xác nhận quy tắc làm tròn/ngưỡng';
+  }
+
+  // TỐT
+  if (hk2 === 'Tốt' && (hk1 === 'Tốt' || hk1 === 'Khá')) {
+    return 'Tốt';
+  }
+
+  // KHÁ
+  if (
+    (hk2 === 'Khá' && (hk1 === 'Tốt' || hk1 === 'Khá' || hk1 === 'Đạt')) ||
+    (hk2 === 'Đạt' && hk1 === 'Tốt') ||
+    (hk2 === 'Tốt' && (hk1 === 'Đạt' || hk1 === 'Chưa đạt'))
+  ) {
+    return 'Khá';
+  }
+
+  // ĐẠT
+  if (
+    (hk2 === 'Đạt' && (hk1 === 'Khá' || hk1 === 'Đạt' || hk1 === 'Chưa đạt')) ||
+    (hk2 === 'Khá' && hk1 === 'Chưa đạt')
+  ) {
+    return 'Đạt';
+  }
+
+  // CHƯA ĐẠT: All remaining
+  return 'Chưa đạt';
+}

@@ -1,0 +1,1308 @@
+// Central App State Management & In-Memory Store
+// School: THPT Võ Trường Toản - Lớp 10A16 (Năm học 2026-2027)
+// Ban Cán Sự (GVCN, Lớp phó, Lớp trưởng) có toàn quyền điều chỉnh tất cả nội dung trong bản nề nếp.
+// Dữ liệu thực tế 100% - Không chứa dữ liệu mẫu (Demo).
+
+import {
+  Student,
+  Group,
+  Seat,
+  Incident,
+  RewardRecord,
+  PositiveNote,
+  Task,
+  AttendanceRecord,
+  PendingRule,
+  WeekScoreSnapshot,
+  MonthScoreSnapshot,
+  SemesterScoreSnapshot,
+  AnnualResult,
+  AuditLog,
+  RoleType,
+} from '../types';
+import { PRIVATE_ROSTER_10A16 } from '../lib/privateRosterLoader';
+import { OFFICIAL_PENDING_RULES } from '../domain/scoring/pendingRules';
+import {
+  calculateWeeklyScore,
+} from '../domain/scoring/scoringEngine';
+import { OFFICIAL_CONDUCT_CATALOG, ConductCatalogItem } from '../domain/incidents/conductCatalog';
+import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
+
+export interface CurrentUser {
+  id: string;
+  name: string;
+  role: RoleType;
+  class_id: string;
+  student_id?: string;
+  group_id?: string;
+  email?: string;
+  isAuthenticatedOfficer?: boolean;
+}
+
+export interface ClassInfo {
+  school_name: string;
+  class_name: string;
+  academic_year: string;
+  room_number: string;
+  gvcn_name: string;
+  gvcn_email: string;
+  gvcn_phone: string;
+  class_president_name: string;
+  class_vice_discipline_name: string;
+  class_vice_academic_name: string;
+  secretary_name: string;
+  slogan: string;
+  target_conduct_points: number;
+  notes: string;
+}
+
+export interface OfficerAccount {
+  id: string;
+  role: 'gvcn' | 'lop_truong' | 'lop_pho';
+  title: string;
+  name: string;
+  email: string;
+  pin: string;
+}
+
+export interface ToastNotification {
+  id: string;
+  message: string;
+  type: 'success' | 'warn' | 'error' | 'info';
+  duration?: number;
+}
+
+export const OFFICIAL_10A16_GROUPS: Group[] = [
+  { id: 'group-01', class_id: 'class-10a16', group_number: 1, group_name: 'Tổ 1', leader_student_id: '10A16-01' },
+  { id: 'group-02', class_id: 'class-10a16', group_number: 2, group_name: 'Tổ 2', leader_student_id: '10A16-12' },
+  { id: 'group-03', class_id: 'class-10a16', group_number: 3, group_name: 'Tổ 3', leader_student_id: '10A16-23' },
+  { id: 'group-04', class_id: 'class-10a16', group_number: 4, group_name: 'Tổ 4', leader_student_id: '10A16-34' },
+];
+
+function buildOfficial10A16Students(): Student[] {
+  return PRIVATE_ROSTER_10A16.map((s, idx) => {
+    let groupId = 'group-01';
+    if (idx >= 11 && idx < 22) groupId = 'group-02';
+    else if (idx >= 22 && idx < 33) groupId = 'group-03';
+    else if (idx >= 33) groupId = 'group-04';
+
+    return {
+      ...s,
+      group_id: groupId,
+      is_demo: false,
+      status: 'active',
+      seat_number: `Bàn ${Math.floor(idx / 2) + 1} - Dãy ${(idx % 2) + 1}`,
+    };
+  });
+}
+
+class AppStateService {
+  // Official Production Roster for 10A16
+  public dataMode: 'official_10a16' = 'official_10a16';
+
+  // Active toast notifications
+  public toasts: ToastNotification[] = [];
+
+  // Current logged in user (Default: Học sinh - Chế độ Chỉ xem)
+  public currentUser: CurrentUser = {
+    id: 'user-guest',
+    name: 'Học sinh Lớp 10A16 (Chế độ Chỉ xem)',
+    role: 'hoc_sinh',
+    class_id: 'class-10a16',
+    isAuthenticatedOfficer: false,
+  };
+
+  // Thông tin Quản lý Lớp học & Ban cán sự (GVCN có toàn quyền điều chỉnh)
+  public classInfo: ClassInfo = {
+    school_name: 'THPT Võ Trường Toản',
+    class_name: 'Lớp 10A16',
+    academic_year: '2026–2027',
+    room_number: 'Phòng A2.04',
+    gvcn_name: 'Thầy Trần Duy Tân',
+    gvcn_email: 'nouvo4344@gmail.com',
+    gvcn_phone: '0908 123 456',
+    class_president_name: 'Trần Đức Anh',
+    class_vice_discipline_name: 'Lê Thiên Bảo',
+    class_vice_academic_name: 'Nguyễn Gia Bảo',
+    secretary_name: 'Lý Tú Uyên',
+    slogan: 'Kỷ luật tự giác · Học tập hăng say · Tập thể vững mạnh',
+    target_conduct_points: 9.0,
+    notes: 'Toàn thể học sinh thực hiện nghiêm túc QĐ 525/QĐ-THPT.VTT và Điều 8 TT 22/2021/TT-BGDĐT.',
+  };
+
+  // Danh sách tài khoản Gmail & Mã PIN cán bộ được cấp quyền quản trị
+  public officerAccounts: OfficerAccount[] = [
+    {
+      id: 'acc-gvcn-user',
+      role: 'gvcn',
+      title: 'Giáo viên Chủ nhiệm',
+      name: 'Thầy Trần Duy Tân',
+      email: 'nouvo4344@gmail.com',
+      pin: '1016',
+    },
+    {
+      id: 'acc-gvcn-alias',
+      role: 'gvcn',
+      title: 'Giáo viên Chủ nhiệm',
+      name: 'Thầy Trần Duy Tân',
+      email: 'tranduytan.gvcn@gmail.com',
+      pin: '1016',
+    },
+    {
+      id: 'acc-lt',
+      role: 'lop_truong',
+      title: 'Lớp trưởng',
+      name: 'Trần Đức Anh',
+      email: 'tranducanh.loptruong@gmail.com',
+      pin: '10A16lt',
+    },
+    {
+      id: 'acc-lp',
+      role: 'lop_pho',
+      title: 'Lớp phó Kỷ luật & Nề nếp',
+      name: 'Lê Thiên Bảo',
+      email: 'lethienbao.loppho@gmail.com',
+      pin: '10A16lp',
+    },
+  ];
+
+  // State collections - PURE REAL DATA (0 Demo records)
+  public students: Student[] = buildOfficial10A16Students();
+  public groups: Group[] = [...OFFICIAL_10A16_GROUPS];
+  public seats: Seat[] = [];
+  public incidents: Incident[] = [];
+  public rewards: RewardRecord[] = [];
+  public attendance: AttendanceRecord[] = [];
+  public tasks: Task[] = [];
+  public positiveNotes: PositiveNote[] = [];
+  public pendingRules: PendingRule[] = JSON.parse(JSON.stringify(OFFICIAL_PENDING_RULES));
+  public conductCatalog: ConductCatalogItem[] = JSON.parse(JSON.stringify(OFFICIAL_CONDUCT_CATALOG));
+
+  // Snapshots & Revisions
+  public weeklySnapshots: WeekScoreSnapshot[] = [];
+  public monthlySnapshots: MonthScoreSnapshot[] = [];
+  public semesterSnapshots: SemesterScoreSnapshot[] = [];
+  public annualResults: AnnualResult[] = [];
+
+  // Locks and Audits
+  public periodLocks: Record<string, { is_locked: boolean; locked_at?: string; locked_by?: string }> = {};
+  public auditLogs: AuditLog[] = [
+    {
+      id: 'audit-init-01',
+      actor_name: 'Hệ thống VTT PRO',
+      actor_role: 'system',
+      action: 'INIT_SYSTEM',
+      entity_type: 'system',
+      entity_id: 'class-10a16',
+      reason: 'Khởi tạo hệ thống quản lý nề nếp Lớp 10A16 THPT Võ Trường Toản (43 học sinh chính thức - Xóa hoàn toàn dữ liệu mẫu)',
+      timestamp: new Date().toISOString(),
+    },
+  ];
+
+  // Listeners for React state reactivity
+  private listeners: (() => void)[] = [];
+
+  constructor() {
+    this.initDefaultSeats();
+    this.calculateAllWeeklyScores(1);
+
+    // BẢO MẬT: Mặc định luôn là Học sinh (Chỉ xem).
+    // Chỉ phục hồi quyền Cán sự nếu có phiên làm việc đã xác thực trong localStorage.
+    if (typeof window !== 'undefined') {
+      try {
+        const sessionRaw = localStorage.getItem('VTT_OFFICER_SESSION');
+        if (sessionRaw) {
+          const session = JSON.parse(sessionRaw);
+          if (
+            session &&
+            session.role &&
+            (session.role === 'gvcn' || session.role === 'lop_truong' || session.role === 'lop_pho')
+          ) {
+            const acc = this.officerAccounts.find((a) => a.role === session.role);
+            if (acc) {
+              this.setLoggedInRole(session.role);
+              this.currentUser.email = acc.email;
+              this.currentUser.isAuthenticatedOfficer = true;
+              return;
+            }
+          }
+        }
+
+        const studentSessionRaw = localStorage.getItem('VTT_STUDENT_SESSION');
+        if (studentSessionRaw) {
+          const sSession = JSON.parse(studentSessionRaw);
+          if (sSession && sSession.email) {
+            this.setLoggedInRole('hoc_sinh');
+            this.currentUser.email = sSession.email;
+            this.currentUser.name = `Học sinh (${sSession.email})`;
+            this.currentUser.isAuthenticatedOfficer = false;
+            return;
+          }
+        }
+      } catch (e) {}
+      // Xóa bỏ vai trò cũ chưa xác thực
+      localStorage.removeItem('VTT_CURRENT_ROLE');
+    }
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+
+  private notify() {
+    this.listeners.forEach((l) => l());
+  }
+
+  public getDataMode(): string {
+    return 'official_10a16';
+  }
+
+  public isLiveSupabase(): boolean {
+    return isSupabaseConfigured;
+  }
+
+  /**
+   * Check if current user is authorized to adjust any discipline/conduct content:
+   * GVCN, Lớp trưởng, Lớp phó.
+   */
+  public canManageConduct(): boolean {
+    const r = this.currentUser.role;
+    return r === 'gvcn' || r === 'lop_truong' || r === 'lop_pho';
+  }
+
+  public setLoggedInRole(role: RoleType, studentId?: string, groupId?: string) {
+    if (role === 'gvcn') {
+      const gvcnAcc = this.officerAccounts.find((a) => a.role === 'gvcn');
+      this.currentUser = {
+        id: 'user-gvcn',
+        name: gvcnAcc ? `${gvcnAcc.name} (GVCN)` : 'Thầy Trần Duy Tân (GVCN)',
+        role: 'gvcn',
+        class_id: 'class-10a16',
+        email: gvcnAcc?.email,
+        isAuthenticatedOfficer: true,
+      };
+    } else if (role === 'lop_truong') {
+      const studentLt = this.students[0]; // Trần Đức Anh
+      const ltAcc = this.officerAccounts.find((a) => a.role === 'lop_truong');
+      this.currentUser = {
+        id: 'user-lt',
+        name: `${studentLt?.full_name || 'Trần Đức Anh'} (Lớp trưởng)`,
+        role: 'lop_truong',
+        class_id: 'class-10a16',
+        student_id: studentLt?.id,
+        email: ltAcc?.email,
+        isAuthenticatedOfficer: true,
+      };
+    } else if (role === 'lop_pho') {
+      const studentLp = this.students[1]; // Lê Thiên Bảo
+      const lpAcc = this.officerAccounts.find((a) => a.role === 'lop_pho');
+      this.currentUser = {
+        id: 'user-lp',
+        name: `${studentLp?.full_name || 'Lê Thiên Bảo'} (Lớp phó Kỷ luật)`,
+        role: 'lop_pho',
+        class_id: 'class-10a16',
+        student_id: studentLp?.id,
+        email: lpAcc?.email,
+        isAuthenticatedOfficer: true,
+      };
+    } else if (role === 'to_truong') {
+      const studentTt = this.students[2]; // Nguyễn Gia Bảo
+      this.currentUser = {
+        id: 'user-tt',
+        name: `${studentTt?.full_name || 'Nguyễn Gia Bảo'} (Tổ trưởng Tổ 1)`,
+        role: 'to_truong',
+        class_id: 'class-10a16',
+        student_id: studentTt?.id,
+        group_id: 'group-01',
+        isAuthenticatedOfficer: false,
+      };
+    } else {
+      const targetStudent = studentId ? this.students.find((s) => s.id === studentId) : this.students[3];
+      this.currentUser = {
+        id: `user-${targetStudent?.id || 'stu'}`,
+        name: targetStudent ? `${targetStudent.full_name} (Học sinh)` : 'Học sinh Lớp 10A16 (Chỉ xem)',
+        role: 'hoc_sinh',
+        class_id: 'class-10a16',
+        student_id: targetStudent?.id,
+        isAuthenticatedOfficer: false,
+      };
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('VTT_CURRENT_ROLE', role);
+      } catch (e) {}
+    }
+    this.notify();
+  }
+
+  // --- Class Management & Settings ---
+  public updateClassInfo(updates: Partial<ClassInfo>) {
+    Object.assign(this.classInfo, updates);
+    this.addAuditLog(
+      this.currentUser.name,
+      'Cập nhật thông tin Lớp học & Ban cán sự',
+      'class_info',
+      'class-10a16',
+      'GVCN/Ban cán sự điều chỉnh nội dung lớp học'
+    );
+    this.notify();
+  }
+
+  // --- Officer Accounts & Permissions Control ---
+  public updateOfficerAccount(id: string, updates: Partial<OfficerAccount>) {
+    const acc = this.officerAccounts.find((a) => a.id === id);
+    if (!acc) return;
+    Object.assign(acc, updates);
+    this.addAuditLog(this.currentUser.name, `Cập nhật tài khoản cán sự [${acc.name}]`, 'officer_auth', id);
+    this.notify();
+  }
+
+  public addOfficerAccount(newAcc: OfficerAccount) {
+    this.officerAccounts.push(newAcc);
+    this.addAuditLog(this.currentUser.name, `Thêm tài khoản cán sự Gmail [${newAcc.email}]`, 'officer_auth', newAcc.id);
+    this.notify();
+  }
+
+  public deleteOfficerAccount(id: string) {
+    this.officerAccounts = this.officerAccounts.filter((a) => a.id !== id);
+    this.addAuditLog(this.currentUser.name, `Xóa tài khoản cán sự [${id}]`, 'officer_auth', id);
+    this.notify();
+  }
+
+  public authenticateWithGmail(email: string): {
+    success: boolean;
+    isRestricted: boolean;
+    account?: OfficerAccount;
+    message: string;
+  } {
+    const clean = email.trim().toLowerCase();
+    const found = this.officerAccounts.find((a) => a.email.trim().toLowerCase() === clean);
+
+    if (found) {
+      // Authorized Officer Account (GVCN / Ban Cán Sự)
+      this.setLoggedInRole(found.role);
+      this.currentUser.email = found.email;
+      this.currentUser.isAuthenticatedOfficer = true;
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(
+            'VTT_OFFICER_SESSION',
+            JSON.stringify({ role: found.role, email: found.email, name: found.name, timestamp: Date.now() })
+          );
+          localStorage.removeItem('VTT_STUDENT_SESSION');
+        } catch (e) {}
+      }
+      this.addAuditLog(found.name, `Xác thực thành công quyền Cán sự qua Gmail [${found.email}]`, 'auth', found.id);
+      this.showToast(`Chào mừng ${found.name}! Đã kích hoạt toàn quyền cho ${found.title}.`, 'success');
+      this.notify();
+
+      return {
+        success: true,
+        isRestricted: false,
+        account: found,
+        message: `Đăng nhập thành công với vai trò ${found.title}: ${found.name}!`,
+      };
+    } else {
+      // TÀI KHOẢN KHÁC (Học sinh / Phụ huynh / Tài khoản không được cấp quyền)
+      // Hệ thống HẠN CHẾ QUYỀN NGAY LẬP TỨC!
+      this.setLoggedInRole('hoc_sinh');
+      this.currentUser.email = clean;
+      this.currentUser.name = `Học sinh (${clean})`;
+      this.currentUser.isAuthenticatedOfficer = false;
+
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem('VTT_OFFICER_SESSION');
+          localStorage.setItem('VTT_STUDENT_SESSION', JSON.stringify({ email: clean, role: 'hoc_sinh' }));
+        } catch (e) {}
+      }
+
+      this.addAuditLog(`Tài khoản khác [${clean}]`, `Đăng nhập Chế độ Học sinh (Bị hạn chế quyền điều chỉnh)`, 'auth', 'student');
+      this.showToast(
+        `Tài khoản "${clean}" không có trong danh sách Cán sự. Hệ thống đã HẠN CHẾ về Chế độ Học sinh (Chỉ xem)!`,
+        'warn',
+        5000
+      );
+      this.notify();
+
+      return {
+        success: false,
+        isRestricted: true,
+        message: `Địa chỉ Gmail "${clean}" không có trong danh sách Cán sự. Hệ thống đã HẠN CHẾ tài khoản này về Chế độ Học sinh (Chỉ xem và bị khóa toàn bộ quyền sửa)!`,
+      };
+    }
+  }
+
+  public authenticateWithPin(role: 'gvcn' | 'lop_truong' | 'lop_pho', pinInput: string): { success: boolean; account?: OfficerAccount; message: string } {
+    const cleanPin = pinInput.trim();
+    const found = this.officerAccounts.find((a) => a.role === role);
+    if (!found) {
+      return { success: false, message: 'Không tìm thấy vai trò cán bộ này.' };
+    }
+
+    if (found.pin !== cleanPin) {
+      return {
+        success: false,
+        message: 'Mã PIN bảo mật không chính xác. Quyền truy cập bị từ chối!',
+      };
+    }
+
+    this.setLoggedInRole(found.role);
+    this.currentUser.isAuthenticatedOfficer = true;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(
+          'VTT_OFFICER_SESSION',
+          JSON.stringify({ role: found.role, email: found.email, name: found.name, timestamp: Date.now() })
+        );
+      } catch (e) {}
+    }
+    this.addAuditLog(found.name, `Xác thực thành công qua Mã PIN bảo mật`, 'auth', found.id);
+    this.showToast(`Xác thực thành công! Đã kích hoạt toàn quyền cho ${found.title} (${found.name}).`, 'success');
+    this.notify();
+
+    return {
+      success: true,
+      account: found,
+      message: `Xác thực thành công! Kích hoạt toàn quyền điều chỉnh cho ${found.title}.`,
+    };
+  }
+
+  public logoutToStudentMode() {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('VTT_OFFICER_SESSION');
+        localStorage.removeItem('VTT_STUDENT_SESSION');
+        localStorage.removeItem('VTT_CURRENT_ROLE');
+      } catch (e) {}
+    }
+    this.setLoggedInRole('hoc_sinh');
+    this.currentUser.email = undefined;
+    this.currentUser.isAuthenticatedOfficer = false;
+    this.addAuditLog(this.currentUser.name, 'Đăng xuất khỏi quyền cán sự (Khóa về chế độ Học sinh)', 'auth', 'logout');
+    this.showToast('Đã đăng xuất! Hệ thống đã khóa về Chế độ Học sinh (Chỉ xem).', 'info');
+    this.notify();
+  }
+
+  public resetToCleanOfficialRoster() {
+    this.students = buildOfficial10A16Students();
+    this.groups = [...OFFICIAL_10A16_GROUPS];
+    this.incidents = [];
+    this.rewards = [];
+    this.attendance = [];
+    this.tasks = [];
+    this.positiveNotes = [];
+    this.initDefaultSeats();
+    this.calculateAllWeeklyScores(1);
+    this.addAuditLog(this.currentUser.name, 'Làm sạch toàn bộ dữ liệu - Khởi tạo sổ nề nếp 10A16', 'system', 'class-10a16');
+    this.notify();
+  }
+
+  private initDefaultSeats() {
+    const seats: Seat[] = [];
+    const classId = 'class-10a16';
+    let stuIdx = 0;
+    for (let r = 1; r <= 6; r++) {
+      for (let c = 1; c <= 4; c++) {
+        const tableNum = (r - 1) * 2 + (c <= 2 ? 1 : 2);
+        const stu = this.students[stuIdx];
+        seats.push({
+          id: `seat-${r}-${c}`,
+          class_id: classId,
+          row_number: r,
+          col_number: c,
+          table_number: tableNum,
+          student_id: stu ? stu.id : undefined,
+        });
+        stuIdx++;
+      }
+    }
+    this.seats = seats;
+  }
+
+  public addAuditLog(actorName: string, action: string, entityType: string, entityId: string, reason?: string) {
+    const newLog: AuditLog = {
+      id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      actor_name: actorName,
+      actor_role: this.currentUser.role,
+      action,
+      entity_type: entityType,
+      entity_id: entityId,
+      reason,
+      timestamp: new Date().toISOString(),
+    };
+    this.auditLogs.unshift(newLog);
+  }
+
+  // --- Student Management (GVCN & Ban Cán sự có toàn quyền điều chỉnh) ---
+  public addStudent(studentData: Omit<Student, 'id'>): { success: boolean; id: string } {
+    const id = `stu-${Date.now()}`;
+    const newStudent: Student = {
+      ...studentData,
+      id,
+      class_id: 'class-10a16',
+      is_demo: false,
+    };
+    this.students.push(newStudent);
+    this.addAuditLog(
+      this.currentUser.name,
+      'Thêm học sinh mới vào lớp',
+      'student',
+      id,
+      `Học sinh: ${newStudent.full_name} (${newStudent.student_code})`
+    );
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+    return { success: true, id };
+  }
+
+  public updateStudent(studentId: string, updates: Partial<Student>) {
+    const stu = this.students.find((s) => s.id === studentId);
+    if (!stu) return;
+    Object.assign(stu, updates);
+    this.addAuditLog(
+      this.currentUser.name,
+      'Cập nhật thông tin học sinh',
+      'student',
+      studentId,
+      `Điều chỉnh hồ sơ: ${stu.full_name}`
+    );
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+  }
+
+  public deleteStudent(studentId: string) {
+    const idx = this.students.findIndex((s) => s.id === studentId);
+    if (idx === -1) return;
+    const removed = this.students[idx];
+    this.students.splice(idx, 1);
+    // Clear seat assignment if any
+    this.seats.forEach((seat) => {
+      if (seat.student_id === studentId) seat.student_id = undefined;
+    });
+    this.addAuditLog(
+      this.currentUser.name,
+      'Xóa học sinh khỏi danh sách lớp',
+      'student',
+      studentId,
+      `Đã xóa học sinh ${removed.full_name}`
+    );
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+  }
+
+  // --- Group Management (Tổ học tập) ---
+  public updateGroup(groupId: string, updates: Partial<Group>) {
+    const grp = this.groups.find((g) => g.id === groupId);
+    if (!grp) return;
+    Object.assign(grp, updates);
+    this.addAuditLog(
+      this.currentUser.name,
+      'Điều chỉnh thông tin tổ học tập',
+      'group',
+      groupId,
+      `Cập nhật: ${grp.group_name}`
+    );
+    this.notify();
+  }
+
+  public assignStudentToGroup(studentId: string, groupId: string) {
+    const stu = this.students.find((s) => s.id === studentId);
+    if (!stu) return;
+    stu.group_id = groupId;
+    this.addAuditLog(
+      this.currentUser.name,
+      'Chuyển tổ cho học sinh',
+      'student',
+      studentId,
+      `Học sinh ${stu.full_name} chuyển sang tổ ${groupId}`
+    );
+    this.notify();
+  }
+
+  // --- Seating Management (Sơ đồ chỗ ngồi) ---
+  public assignStudentToSeat(seatId: string, studentId?: string) {
+    const seat = this.seats.find((s) => s.id === seatId);
+    if (!seat) return;
+    if (studentId) {
+      this.seats.forEach((s) => {
+        if (s.id !== seatId && s.student_id === studentId) {
+          s.student_id = undefined;
+        }
+      });
+      const stu = this.students.find((s) => s.id === studentId);
+      if (stu) {
+        stu.seat_number = `Bàn ${seat.table_number} (Dãy ${seat.col_number <= 2 ? 1 : 2})`;
+      }
+    } else {
+      if (seat.student_id) {
+        const prevStu = this.students.find((s) => s.id === seat.student_id);
+        if (prevStu) prevStu.seat_number = undefined;
+      }
+    }
+    seat.student_id = studentId;
+    this.addAuditLog(
+      this.currentUser.name,
+      'Điều chỉnh vị trí sơ đồ chỗ ngồi',
+      'seat',
+      seatId,
+      `Bàn ${seat.table_number}`
+    );
+    this.notify();
+  }
+
+  public swapSeats(seatId1: string, seatId2: string) {
+    const s1 = this.seats.find((s) => s.id === seatId1);
+    const s2 = this.seats.find((s) => s.id === seatId2);
+    if (!s1 || !s2) return;
+    const tempStu = s1.student_id;
+    s1.student_id = s2.student_id;
+    s2.student_id = tempStu;
+
+    if (s1.student_id) {
+      const stu1 = this.students.find((s) => s.id === s1.student_id);
+      if (stu1) stu1.seat_number = `Bàn ${s1.table_number} (Dãy ${s1.col_number <= 2 ? 1 : 2})`;
+    }
+    if (s2.student_id) {
+      const stu2 = this.students.find((s) => s.id === s2.student_id);
+      if (stu2) stu2.seat_number = `Bàn ${s2.table_number} (Dãy ${s2.col_number <= 2 ? 1 : 2})`;
+    }
+
+    this.addAuditLog(this.currentUser.name, 'Hoán đổi chỗ ngồi giữa 2 bàn', 'seat', `${seatId1}<->${seatId2}`);
+    this.notify();
+  }
+
+  public autoArrangeSeats(method: 'by_group' | 'by_roster' = 'by_roster') {
+    const sortedStudents = [...this.students];
+    if (method === 'by_group') {
+      sortedStudents.sort((a, b) => (a.group_id || '').localeCompare(b.group_id || ''));
+    }
+    this.seats.forEach((seat, idx) => {
+      const stu = sortedStudents[idx];
+      seat.student_id = stu ? stu.id : undefined;
+      if (stu) {
+        stu.seat_number = `Bàn ${seat.table_number} (Dãy ${seat.col_number <= 2 ? 1 : 2})`;
+      }
+    });
+    this.addAuditLog(
+      this.currentUser.name,
+      'Sắp xếp tự động lại toàn bộ sơ đồ chỗ ngồi',
+      'seating',
+      'class-10a16',
+      `Phương pháp: ${method}`
+    );
+    this.notify();
+  }
+
+  // --- Attendance ---
+  public recordAttendance(record: Omit<AttendanceRecord, 'id'>): { success: boolean; id: string } {
+    const existingIndex = this.attendance.findIndex(
+      (a) => a.student_id === record.student_id && a.date === record.date && a.session === record.session
+    );
+
+    const id = existingIndex >= 0 ? this.attendance[existingIndex].id : `att-${Date.now()}`;
+    const newRec: AttendanceRecord = { ...record, id };
+
+    if (existingIndex >= 0) {
+      this.attendance[existingIndex] = newRec;
+    } else {
+      this.attendance.unshift(newRec);
+    }
+
+    this.addAuditLog(this.currentUser.name, 'Ghi nhận điểm danh', 'attendance', id, `Trạng thái: ${record.status}`);
+    this.notify();
+    return { success: true, id };
+  }
+
+  // --- Incidents & Conduct Management (GVCN, Lớp phó, Lớp trưởng có toàn quyền) ---
+  public checkIncidentDuplicate(studentId: string, date: string, session: string, code: string | null): boolean {
+    return this.incidents.some(
+      (inc) =>
+        inc.student_id === studentId &&
+        inc.date === date &&
+        inc.session === session &&
+        inc.conduct_code === code &&
+        inc.incident_status !== 'rejected'
+    );
+  }
+
+  public submitIncident(incidentData: Omit<Incident, 'id' | 'created_at' | 'effective_deduction'>): { success: boolean; id: string; warning?: string } {
+    const isDup = this.checkIncidentDuplicate(incidentData.student_id, incidentData.date, incidentData.session, incidentData.conduct_code);
+
+    let baseDeduction = 0;
+    if (incidentData.conduct_code) {
+      const catalogItem = this.conductCatalog.find((c) => c.code === incidentData.conduct_code);
+      baseDeduction = catalogItem ? catalogItem.defaultPoints : 0;
+    }
+
+    const id = `inc-${Date.now()}`;
+    const newIncident: Incident = {
+      ...incidentData,
+      id,
+      base_deduction: baseDeduction,
+      effective_deduction: incidentData.score_effect_status === 'confirmed_effect' && incidentData.incident_status === 'approved' ? baseDeduction : 0,
+      duplicate_warning: isDup,
+      created_at: new Date().toISOString(),
+    };
+
+    this.incidents.unshift(newIncident);
+    this.addAuditLog(
+      this.currentUser.name,
+      'Ghi nhận vi phạm nề nếp',
+      'incident',
+      id,
+      `Mã: ${incidentData.conduct_code || 'Sự việc khác'}. Trạng thái: ${newIncident.incident_status}`
+    );
+
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+
+    return {
+      success: true,
+      id,
+      warning: isDup ? 'CẢNH BÁO: Phát hiện sự việc tương tự của học sinh này trong cùng buổi! Hệ thống không tự động gộp (chờ Ban cán sự/GVCN rà soát).' : undefined,
+    };
+  }
+
+  public reviewIncident(
+    incidentId: string,
+    action: 'approved' | 'rejected' | 'more_info_needed',
+    scoreEffectStatus: 'confirmed_effect' | 'pending_rule' | 'waived' | 'none',
+    comment?: string
+  ) {
+    const inc = this.incidents.find((i) => i.id === incidentId);
+    if (!inc) return;
+
+    inc.incident_status = action;
+    inc.score_effect_status = scoreEffectStatus;
+    inc.gvcn_comment = comment;
+
+    if (action === 'approved' && scoreEffectStatus === 'confirmed_effect') {
+      inc.effective_deduction = inc.base_deduction;
+    } else {
+      inc.effective_deduction = 0;
+    }
+
+    this.addAuditLog(
+      this.currentUser.name,
+      `Duyệt sự việc nề nếp: ${action.toUpperCase()}`,
+      'incident',
+      incidentId,
+      `Hiệu lực điểm: ${scoreEffectStatus}. Nhận xét: ${comment || 'Đã kiểm tra'}`
+    );
+
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+  }
+
+  public updateIncident(incidentId: string, updates: Partial<Incident>) {
+    const inc = this.incidents.find((i) => i.id === incidentId);
+    if (!inc) return;
+
+    Object.assign(inc, updates);
+
+    // Recalculate effective deduction
+    if (inc.incident_status === 'approved' && inc.score_effect_status === 'confirmed_effect') {
+      inc.effective_deduction = inc.base_deduction;
+    } else {
+      inc.effective_deduction = 0;
+    }
+
+    this.addAuditLog(
+      this.currentUser.name,
+      'Điều chỉnh nội dung sự việc nề nếp',
+      'incident',
+      incidentId,
+      `Cập nhật chi tiết sự việc bởi ${this.currentUser.name}`
+    );
+
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+  }
+
+  public deleteIncident(incidentId: string) {
+    const incIdx = this.incidents.findIndex((i) => i.id === incidentId);
+    if (incIdx === -1) return;
+
+    const removed = this.incidents[incIdx];
+    this.incidents.splice(incIdx, 1);
+
+    this.addAuditLog(
+      this.currentUser.name,
+      'Xóa sự việc nề nếp',
+      'incident',
+      incidentId,
+      `Đã xóa bản ghi vi phạm của học sinh ${removed.student_id}`
+    );
+
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+  }
+
+  // --- Rewards ---
+  public submitReward(reward: Omit<RewardRecord, 'id' | 'created_at'>): { success: boolean; id: string; warning?: string } {
+    const isDup = this.rewards.some(
+      (r) => r.student_id === reward.student_id && r.reward_code === reward.reward_code && r.date === reward.date
+    );
+
+    const id = `rew-${Date.now()}`;
+    const newRew: RewardRecord = {
+      ...reward,
+      id,
+      duplicate_warning: isDup,
+      created_at: new Date().toISOString(),
+    };
+
+    this.rewards.unshift(newRew);
+    this.addAuditLog(this.currentUser.name, 'Đề xuất khen thưởng nề nếp', 'reward', id, `Mã: ${reward.reward_code} (+${reward.points}đ)`);
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+
+    return {
+      success: true,
+      id,
+      warning: isDup ? 'CẢNH BÁO: Phát hiện khen thưởng tương tự cùng ngày! Không tự động gộp.' : undefined,
+    };
+  }
+
+  public reviewReward(rewardId: string, approved: boolean) {
+    const rew = this.rewards.find((r) => r.id === rewardId);
+    if (!rew) return;
+
+    rew.status = approved ? 'approved' : 'rejected';
+    rew.approver = this.currentUser.name;
+
+    this.addAuditLog(this.currentUser.name, approved ? 'Phê duyệt khen thưởng' : 'Từ chối khen thưởng', 'reward', rewardId);
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+  }
+
+  // --- Positive Notes ---
+  public addPositiveNote(note: Omit<PositiveNote, 'id' | 'created_at'>) {
+    const id = `pos-${Date.now()}`;
+    const newNote: PositiveNote = { ...note, id, created_at: new Date().toISOString() };
+    this.positiveNotes.unshift(newNote);
+    this.addAuditLog(this.currentUser.name, 'Ghi nhận lời khen tích cực', 'positive_note', id);
+    this.notify();
+  }
+
+  // --- Tasks ---
+  public createTask(task: Omit<Task, 'id' | 'created_at'>) {
+    const id = `task-${Date.now()}`;
+    const newTask: Task = { ...task, id, created_at: new Date().toISOString() };
+    this.tasks.unshift(newTask);
+    this.addAuditLog(this.currentUser.name, 'Giao nhiệm vụ lớp', 'task', id, task.title);
+    this.notify();
+  }
+
+  public updateTaskStatus(taskId: string, status: Task['status']) {
+    const task = this.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    task.status = status;
+    this.addAuditLog(this.currentUser.name, `Cập nhật trạng thái nhiệm vụ: ${status}`, 'task', taskId);
+    this.notify();
+  }
+
+  // --- Pending Rules Configuration (GVCN, Lớp phó, Lớp trưởng có toàn quyền) ---
+  public configurePendingRule(
+    ruleCode: string,
+    selectedOption: string,
+    basis: string,
+    effectiveFrom: string,
+    effectiveTo?: string
+  ) {
+    const rule = this.pendingRules.find((r) => r.code === ruleCode);
+    if (!rule) return;
+
+    rule.selected_option = selectedOption;
+    rule.basis = basis;
+    rule.effective_from = effectiveFrom;
+    rule.effective_to = effectiveTo || null;
+    rule.status = 'confirmed_by_gvcn';
+    rule.configured_by = this.currentUser.name;
+    rule.confirmed_by = this.currentUser.name;
+
+    this.addAuditLog(
+      this.currentUser.name,
+      'Điều chỉnh quy tắc nề nếp',
+      'pending_rule',
+      ruleCode,
+      `Tùy chọn: ${selectedOption}. Căn cứ: ${basis}`
+    );
+
+    this.notify();
+  }
+
+  // --- Conduct Catalog Item Adjustments ---
+  public updateConductCatalogItem(code: string, updates: Partial<ConductCatalogItem>) {
+    const item = this.conductCatalog.find((c) => c.code === code);
+    if (!item) return;
+
+    Object.assign(item, updates);
+
+    // Also update any incident with this code that hasn't been individually overridden
+    this.incidents.forEach((inc) => {
+      if (inc.conduct_code === code) {
+        if (updates.defaultPoints !== undefined) {
+          inc.base_deduction = updates.defaultPoints;
+          if (inc.incident_status === 'approved' && inc.score_effect_status === 'confirmed_effect') {
+            inc.effective_deduction = updates.defaultPoints;
+          }
+        }
+      }
+    });
+
+    this.addAuditLog(
+      this.currentUser.name,
+      'Điều chỉnh biểu điểm quy định nề nếp',
+      'conduct_catalog',
+      code,
+      `Cập nhật mã ${code}: Điểm trừ ${item.defaultPoints}đ. Mô tả: ${item.title}`
+    );
+
+    this.calculateAllWeeklyScores(1);
+    this.notify();
+  }
+
+  public addConductCatalogItem(newItem: ConductCatalogItem) {
+    const existing = this.conductCatalog.find((c) => c.code === newItem.code);
+    if (existing) {
+      Object.assign(existing, newItem);
+    } else {
+      this.conductCatalog.push(newItem);
+    }
+
+    this.addAuditLog(
+      this.currentUser.name,
+      'Bổ sung quy định nề nếp mới',
+      'conduct_catalog',
+      newItem.code,
+      `Mã ${newItem.code}: ${newItem.title} (${newItem.defaultPoints}đ)`
+    );
+
+    this.notify();
+  }
+
+  // --- Scoring & Snapshot Calculations ---
+  public calculateAllWeeklyScores(weekNumber: number = 1) {
+    const weekId = `W${weekNumber.toString().padStart(2, '0')}`;
+    const isLocked = Boolean(this.periodLocks[`week-${weekId}`]?.is_locked);
+
+    const newSnapshots: WeekScoreSnapshot[] = [];
+
+    for (const student of this.students) {
+      const stuIncidents = this.incidents.filter((i) => i.student_id === student.id);
+      const stuRewards = this.rewards.filter((r) => r.student_id === student.id);
+
+      const scoreResult = calculateWeeklyScore({
+        isCalculated: true,
+        incidents: stuIncidents,
+        rewards: stuRewards,
+      });
+
+      const existingSnap = this.weeklySnapshots.find((s) => s.student_id === student.id && s.week_id === weekId && s.is_current);
+      const revisionNo = existingSnap ? existingSnap.revision_no + 1 : 1;
+
+      if (existingSnap) {
+        existingSnap.is_current = false;
+      }
+
+      newSnapshots.push({
+        id: `snap-w-${student.id}-${weekId}-r${revisionNo}`,
+        student_id: student.id,
+        week_id: weekId,
+        week_number: weekNumber,
+        revision_no: revisionNo,
+        is_current: true,
+        raw_week_score: scoreResult.raw_week_score,
+        official_week_score: scoreResult.official_week_score,
+        reward_points: scoreResult.total_rewards,
+        deduction_points: scoreResult.total_deductions,
+        incidents_count: scoreResult.eligible_incidents_count,
+        rewards_count: scoreResult.eligible_rewards_count,
+        status: isLocked ? 'locked' : 'calculated',
+        calculated_at: new Date().toISOString(),
+      });
+    }
+
+    this.weeklySnapshots = [...this.weeklySnapshots.filter((s) => !s.is_current), ...newSnapshots];
+    this.notify();
+  }
+
+  // --- Period Locks ---
+  public canLockPeriod(periodType: 'week' | 'month' | 'semester', periodId: string): { canLock: boolean; blockers: string[] } {
+    const blockers: string[] = [];
+
+    const pendingIncidents = this.incidents.filter((i) => i.incident_status === 'pending_verification');
+    if (pendingIncidents.length > 0) {
+      blockers.push(`Còn ${pendingIncidents.length} sự việc chưa được thẩm tra`);
+    }
+
+    const pendingRewards = this.rewards.filter((r) => r.status === 'pending');
+    if (pendingRewards.length > 0) {
+      blockers.push(`Còn ${pendingRewards.length} đề xuất khen thưởng chưa duyệt`);
+    }
+
+    const pendingRuleIncidents = this.incidents.filter((i) => i.score_effect_status === 'pending_rule');
+    if (pendingRuleIncidents.length > 0) {
+      blockers.push(`Còn ${pendingRuleIncidents.length} sự việc đang treo hiệu lực điểm do quy tắc chưa xác nhận`);
+    }
+
+    return {
+      canLock: blockers.length === 0,
+      blockers,
+    };
+  }
+
+  public lockPeriod(periodType: 'week' | 'month' | 'semester', periodId: string): { success: boolean; message: string } {
+    const { canLock, blockers } = this.canLockPeriod(periodType, periodId);
+    if (!canLock) {
+      return { success: false, message: `Không thể khóa kỳ: ${blockers.join(', ')}` };
+    }
+
+    const key = `${periodType}-${periodId}`;
+    this.periodLocks[key] = {
+      is_locked: true,
+      locked_at: new Date().toISOString(),
+      locked_by: this.currentUser.name,
+    };
+
+    this.addAuditLog(this.currentUser.name, `Khóa kỳ đánh giá [${key}]`, 'period_lock', key);
+    this.notify();
+    return { success: true, message: 'Đã khóa kỳ thành công!' };
+  }
+
+  public reopenPeriod(periodType: 'week' | 'month' | 'semester', periodId: string, reason: string): { success: boolean; message: string } {
+    const key = `${periodType}-${periodId}`;
+    if (!this.periodLocks[key]?.is_locked) {
+      return { success: false, message: 'Kỳ này hiện không bị khóa.' };
+    }
+
+    this.periodLocks[key] = { is_locked: false };
+    this.addAuditLog(this.currentUser.name, `Mở khóa lại kỳ đánh giá [${key}]`, 'period_lock', key, `Lý do: ${reason}`);
+    this.notify();
+    return { success: true, message: 'Đã mở khóa kỳ thành công!' };
+  }
+
+  // --- Full Backup & Restore ---
+  public exportBackupData(): string {
+    const backup = {
+      version: '2.0',
+      exported_at: new Date().toISOString(),
+      school: 'THPT Võ Trường Toản',
+      class: '10A16',
+      academic_year: '2026-2027',
+      dataMode: 'official_10a16',
+      students: this.students,
+      groups: this.groups,
+      seats: this.seats,
+      attendance: this.attendance,
+      incidents: this.incidents,
+      rewards: this.rewards,
+      tasks: this.tasks,
+      positiveNotes: this.positiveNotes,
+      pendingRules: this.pendingRules,
+      conductCatalog: this.conductCatalog,
+      weeklySnapshots: this.weeklySnapshots,
+      periodLocks: this.periodLocks,
+      auditLogs: this.auditLogs,
+    };
+    return JSON.stringify(backup, null, 2);
+  }
+
+  public importBackupData(jsonString: string): { success: boolean; message: string } {
+    try {
+      const data = JSON.parse(jsonString);
+      if (!data.students || !Array.isArray(data.students)) {
+        return { success: false, message: 'Tệp sao lưu không đúng định dạng của VTT PRO.' };
+      }
+
+      this.students = data.students || buildOfficial10A16Students();
+      this.groups = data.groups || [...OFFICIAL_10A16_GROUPS];
+      this.seats = data.seats || [];
+      this.attendance = data.attendance || [];
+      this.incidents = data.incidents || [];
+      this.rewards = data.rewards || [];
+      this.tasks = data.tasks || [];
+      this.positiveNotes = data.positiveNotes || [];
+      this.pendingRules = data.pendingRules || this.pendingRules;
+      this.conductCatalog = data.conductCatalog || this.conductCatalog;
+      this.weeklySnapshots = data.weeklySnapshots || [];
+      this.periodLocks = data.periodLocks || {};
+      this.auditLogs = data.auditLogs || [];
+
+      this.addAuditLog(this.currentUser.name, 'Phục hồi dữ liệu từ tệp sao lưu JSON', 'system', 'class-10a16');
+      this.calculateAllWeeklyScores(1);
+      this.notify();
+
+      return {
+        success: true,
+        message: `Phục hồi thành công ${this.students.length} học sinh, ${this.incidents.length} sự việc nề nếp, ${this.attendance.length} bản ghi điểm danh!`,
+      };
+    } catch (err: any) {
+      return { success: false, message: `Lỗi đọc tệp sao lưu: ${err.message}` };
+    }
+  }
+
+  // --- Supabase Cloud Sync Methods ---
+  public async syncAllToSupabase(): Promise<{ success: boolean; message: string }> {
+    if (!supabase) {
+      return {
+        success: false,
+        message: 'Chưa kết nối Supabase Cloud. Vui lòng kiểm tra URL và API Key trong trang Cài đặt.',
+      };
+    }
+
+    try {
+      // 1. Classes
+      await supabase.from('classes').upsert({
+        id: 'class-10a16',
+        name: this.classInfo.class_name,
+        academic_year_id: 'ay-2026-2027',
+        gvcn_name: this.classInfo.gvcn_name,
+      });
+
+      // 2. Students (43 official students)
+      const studentsPayload = this.students.map((s) => ({
+        id: s.id,
+        student_code: s.student_code,
+        full_name: s.full_name,
+        first_name: s.first_name,
+        last_name: s.last_name,
+        class_id: 'class-10a16',
+        group_id: s.group_id,
+        seat_number: s.seat_number,
+        status: s.status,
+        is_demo: false,
+      }));
+      const { error: stuErr } = await supabase.from('students').upsert(studentsPayload, { onConflict: 'student_code' });
+      if (stuErr) throw stuErr;
+
+      // 3. Incidents
+      if (this.incidents.length > 0) {
+        const incidentsPayload = this.incidents.map((i) => ({
+          id: i.id,
+          student_id: i.student_id,
+          class_id: 'class-10a16',
+          conduct_code: i.conduct_code,
+          is_other_category: i.is_other_category,
+          other_category_description: i.other_category_description,
+          date: i.date,
+          session: i.session,
+          incident_status: i.incident_status,
+          score_effect_status: i.score_effect_status,
+          base_deduction: i.base_deduction,
+          effective_deduction: i.effective_deduction,
+          reported_by: i.reported_by,
+          reporter_role: i.reporter_role,
+          notes: i.notes,
+        }));
+        await supabase.from('incidents').upsert(incidentsPayload);
+      }
+
+      // 4. Rewards
+      if (this.rewards.length > 0) {
+        const rewardsPayload = this.rewards.map((r) => ({
+          id: r.id,
+          student_id: r.student_id,
+          class_id: 'class-10a16',
+          reward_code: r.reward_code,
+          title: r.title,
+          points: r.points,
+          status: r.status,
+          proposer: r.proposer,
+          date: r.date,
+        }));
+        await supabase.from('rewards').upsert(rewardsPayload);
+      }
+
+      this.addAuditLog(this.currentUser.name, 'Đồng bộ toàn bộ dữ liệu lên Supabase Cloud', 'cloud_sync', 'class-10a16');
+      this.showToast('Đã đồng bộ thành công toàn bộ dữ liệu lên Supabase Cloud!', 'success');
+
+      return {
+        success: true,
+        message: `Đồng bộ thành công ${this.students.length} học sinh và dữ liệu nề nếp lên Supabase Cloud!`,
+      };
+    } catch (err: any) {
+      console.error('Lỗi sync Supabase:', err);
+      return {
+        success: false,
+        message: `Không thể đồng bộ: ${err.message || 'Vui lòng kiểm tra quyền truy cập RLS trên bảng Supabase.'}`,
+      };
+    }
+  }
+
+  public async fetchFromSupabase(): Promise<{ success: boolean; message: string }> {
+    if (!supabase) {
+      return { success: false, message: 'Chưa cấu hình Supabase Cloud.' };
+    }
+
+    try {
+      const { data: studentsData, error: stuErr } = await supabase
+        .from('students')
+        .select('*')
+        .eq('class_id', 'class-10a16');
+
+      if (stuErr) throw stuErr;
+
+      if (studentsData && studentsData.length > 0) {
+        this.students = studentsData.map((s: any) => ({
+          id: s.id,
+          student_code: s.student_code,
+          full_name: s.full_name,
+          first_name: s.first_name || '',
+          last_name: s.last_name || '',
+          class_id: s.class_id,
+          group_id: s.group_id,
+          seat_number: s.seat_number,
+          status: s.status || 'active',
+          is_demo: false,
+        }));
+      }
+
+      const { data: incData } = await supabase
+        .from('incidents')
+        .select('*')
+        .eq('class_id', 'class-10a16');
+
+      if (incData) {
+        this.incidents = incData;
+      }
+
+      this.calculateAllWeeklyScores(1);
+      this.addAuditLog(this.currentUser.name, 'Tải dữ liệu mới nhất từ Supabase Cloud', 'cloud_fetch', 'class-10a16');
+      this.notify();
+      this.showToast('Đã tải và cập nhật dữ liệu từ Supabase Cloud!', 'success');
+
+      return {
+        success: true,
+        message: `Tải thành công ${studentsData?.length || 0} học sinh và ${incData?.length || 0} sự việc từ Supabase!`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Không thể tải dữ liệu: ${err.message}`,
+      };
+    }
+  }
+
+  public showToast(message: string, type: 'success' | 'warn' | 'error' | 'info' = 'success', duration = 3200) {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    this.toasts = [...this.toasts, { id, message, type, duration }];
+    this.notify();
+
+    setTimeout(() => {
+      this.dismissToast(id);
+    }, duration);
+  }
+
+  public dismissToast(id: string) {
+    this.toasts = this.toasts.filter((t) => t.id !== id);
+    this.notify();
+  }
+}
+
+export const appState = new AppStateService();

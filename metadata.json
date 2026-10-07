@@ -1,0 +1,6 @@
+{
+  "name": "NỀ NẾP LỚP 10 – VTT PRO",
+  "description": "Hệ thống quản lý nề nếp và rèn luyện học sinh Lớp 10A16 - Trường THPT Võ Trường Toản (Năm học 2026-2027)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
